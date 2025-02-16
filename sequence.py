@@ -10,7 +10,7 @@ db = mongo_client["sequence_bot"]
 users_collection = db["users_sequence"]
 
 app = Client("sequence_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-user_sequences = defaultdict(list)
+user_sequences = {} 
 
 # Patterns for extracting episode numbers
 patterns = [
@@ -51,21 +51,21 @@ def start_command(client, message):
 @app.on_message(filters.command("startsequence"))
 def start_sequence(client, message):
     user_id = message.from_user.id
-    user_sequences[user_id] = []
-    message.reply_text("Sequence mode Started! Send your files now.")
+    if user_id not in user_sequences: 
+        user_sequences[user_id] = []
+        message.reply_text("✅ Sequence mode started! Send your files now.")
 
 @app.on_message(filters.command("endsequence"))
 def end_sequence(client, message):
     user_id = message.from_user.id
-    if user_id not in user_sequences or not user_sequences[user_id]:
-        message.reply_text("No files in sequence!")
+    if user_id not in user_sequences or not user_sequences[user_id]: 
+        message.reply_text("❌ No files in sequence!")
         return
     
     sorted_files = sorted(user_sequences[user_id], key=lambda x: extract_episode_number(x["filename"]))
     
     for file in sorted_files:
         client.copy_message(message.chat.id, from_chat_id=file["chat_id"], message_id=file["msg_id"]) 
-    
 
     users_collection.update_one(
         {"user_id": user_id},
@@ -73,16 +73,23 @@ def end_sequence(client, message):
         upsert=True
     )
 
-    user_sequences[user_id] = []
-    message.reply_text("All files are in sequenced!")
+    del user_sequences[user_id] 
+    message.reply_text("✅ All files have been sequenced!")
 
 @app.on_message(filters.document | filters.video | filters.audio)
 def store_file(client, message):
     user_id = message.from_user.id
-    if user_id in user_sequences:
-        file_name = message.document.file_name if message.document else message.video.file_name if message.video else message.audio.file_name if message.audio else "Unknown"
+    if user_id in user_sequences: 
+        file_name = (
+            message.document.file_name if message.document else
+            message.video.file_name if message.video else
+            message.audio.file_name if message.audio else
+            "Unknown"
+        )
         user_sequences[user_id].append({"filename": file_name, "msg_id": message.id, "chat_id": message.chat.id})
-        message.reply_text("Your file added to sequence!")
+        message.reply_text("📂 Your file has been added to the sequence!")
+    else:
+        message.reply_text("❌ You need to start sequence mode first using /startsequence.")
 
 @app.on_message(filters.command("leaderboard"))
 def leaderboard(client, message):
@@ -94,7 +101,7 @@ def leaderboard(client, message):
 
     message.reply_text(leaderboard_text if leaderboard_text else "No data available!")
 
-#/broadcast Command
+# /broadcast Command
 @app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
 def broadcast(client, message):
     if len(message.command) < 2:
@@ -114,7 +121,7 @@ def broadcast(client, message):
 
     message.reply_text(f"✅ Broadcast sent to {count} users.")
 
-#/users Command 
+# /users Command 
 @app.on_message(filters.command("users") & filters.user(OWNER_ID))
 def get_users(client, message):
     user_count = users_collection.count_documents({})
@@ -141,13 +148,13 @@ async def cb_handler(client: app, query: CallbackQuery):
             text=START_MSG.format(first=query.from_user.first_name),
             disable_web_page_preview=True,
             reply_markup=InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("Help", callback_data='help'),
-            InlineKeyboardButton("Close", callback_data='close')
-        ],
-        [
-            InlineKeyboardButton("OWNER", url='https://t.me/Its_Sahil_Ansari')
-        ]
+                [
+                    InlineKeyboardButton("Help", callback_data='help'),
+                    InlineKeyboardButton("Close", callback_data='close')
+                ],
+                [
+                    InlineKeyboardButton("OWNER", url='https://t.me/Its_Sahil_Ansari')
+                ]
             ])
         )
     elif data == "close":
