@@ -1,3 +1,4 @@
+import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
 import re
@@ -56,16 +57,17 @@ def start_sequence(client, message):
         message.reply_text("✅ Sequence mode started! Send your files now.")
 
 @app.on_message(filters.command("endsequence"))
-def end_sequence(client, message):
+async def end_sequence(client, message):
     user_id = message.from_user.id
     if user_id not in user_sequences or not user_sequences[user_id]: 
-        message.reply_text("❌ No files in sequence!")
+        await message.reply_text("❌ No files in sequence!")
         return
     
     sorted_files = sorted(user_sequences[user_id], key=lambda x: extract_episode_number(x["filename"]))
     
     for file in sorted_files:
-        client.copy_message(message.chat.id, from_chat_id=file["chat_id"], message_id=file["msg_id"]) 
+        await client.copy_message(message.chat.id, from_chat_id=file["chat_id"], message_id=file["msg_id"])
+        await asyncio.sleep(0.5)  # 500 milliseconds delay (adjust if needed)
 
     users_collection.update_one(
         {"user_id": user_id},
@@ -74,7 +76,7 @@ def end_sequence(client, message):
     )
 
     del user_sequences[user_id] 
-    message.reply_text("✅ All files have been sequenced!")
+    await message.reply_text("✅ All files have been sequenced!")
 
 @app.on_message(filters.document | filters.video | filters.audio)
 def store_file(client, message):
@@ -92,14 +94,17 @@ def store_file(client, message):
         message.reply_text("❌ You need to start sequence mode first using /startsequence.")
 
 @app.on_message(filters.command("leaderboard"))
-def leaderboard(client, message):
-    top_users = users_collection.find().sort("files_sequenced", -1).limit(10)
-    leaderboard_text = "**🏆 Leaderboard 🏆**\n\n"
+async def leaderboard(client, message):
+    top_users = users_collection.find().sort("files_sequenced", -1).limit(5) 
+    leaderboard_text = "**🏆 Top Users 🏆**\n\n"
 
     for index, user in enumerate(top_users, start=1):
         leaderboard_text += f"**{index}. {user['username']}** - {user['files_sequenced']} files\n"
 
-    message.reply_text(leaderboard_text if leaderboard_text else "No data available!")
+    if not leaderboard_text.strip():
+        leaderboard_text = "No data available!"
+
+    await message.reply_text(leaderboard_text)
 
 # /broadcast Command
 @app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
