@@ -15,14 +15,15 @@ user_sequences = {}
 
 # Patterns for extracting episode numbers
 patterns = [
-    re.compile(r'S(\d+)(?:E|EP)(\d+)', re.IGNORECASE),
-    re.compile(r'S(\d+)\s*(?:E|EP|-\s*EP)(\d+)', re.IGNORECASE),
-    re.compile(r'(?:[([<{]?\s*(?:E|EP)\s*(\d+)\s*[)\]>}]?)', re.IGNORECASE),
-    re.compile(r'(?:\s*-\s*(\d+)\s*)'),
-    re.compile(r'S(\d+)[^\d]*(\d+)', re.IGNORECASE),
-    re.compile(r'(\d+)')
+    re.compile(r'\b(?:EP|E)\s*-\s*(\d{1,3})\b', re.IGNORECASE),  # "Ep - 06" format fix
+    re.compile(r'\b(?:EP|E)\s*(\d{1,3})\b', re.IGNORECASE),  # "EP06" or "E 06"
+    re.compile(r'S(\d+)(?:E|EP)(\d+)', re.IGNORECASE),  # "S1E06" / "S01EP06"
+    re.compile(r'S(\d+)\s*(?:E|EP|-\s*EP)\s*(\d+)', re.IGNORECASE),  # "S 1 Ep 06"
+    re.compile(r'(?:[([<{]?\s*(?:E|EP)\s*(\d+)\s*[)\]>}]?)', re.IGNORECASE),  # "E(06)"
+    re.compile(r'(?:EP|E)?\s*[-]?\s*(\d{1,3})', re.IGNORECASE),  # "E - 06" / "- 06"
+    re.compile(r'S(\d+)[^\d]*(\d+)', re.IGNORECASE),  # "S1 - 06"
+    re.compile(r'(\d+)')  # Simple fallback (last resort)
 ]
-
 def extract_episode_number(filename):
     for pattern in patterns:
         match = pattern.search(filename)
@@ -67,7 +68,7 @@ async def end_sequence(client, message):
     
     for file in sorted_files:
         await client.copy_message(message.chat.id, from_chat_id=file["chat_id"], message_id=file["msg_id"])
-        await asyncio.sleep(0.5)  # 500 milliseconds delay (adjust if needed)
+        await asyncio.sleep(0.1)  # 500 milliseconds delay (adjust if needed)
 
     users_collection.update_one(
         {"user_id": user_id},
