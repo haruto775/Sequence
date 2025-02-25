@@ -41,7 +41,7 @@ cd <repo-name>
 pip3 install -r requirements.txt
 
 # Add all values in config.py properly
-python3 main.py
+python3 sequence.py
 ```
 
 ### 🤖 Developed by [Sahil0976](https://github.com/Sahil0976) 🎯
