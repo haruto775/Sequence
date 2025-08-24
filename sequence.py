@@ -1,10 +1,15 @@
 import asyncio
+import logging
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
 import re
 from collections import defaultdict
 from pymongo import MongoClient
 from config import API_HASH, API_ID, BOT_TOKEN, MONGO_URI, START_PIC, START_MSG, HELP_TXT, OWNER_ID
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["sequence_bot"]
@@ -51,7 +56,7 @@ default_resolution_order = {
 }
 
 @app.on_message(filters.command("start"))
-def start_command(client, message):
+async def start_command(client, message):
     buttons = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("Help", callback_data='help'),
@@ -62,11 +67,12 @@ def start_command(client, message):
             InlineKeyboardButton("Set Sequence Mode", callback_data='set_mode')
         ],
         [
+            InlineKeyboardButton("Show Settings", callback_data='show_settings'),
             InlineKeyboardButton("OWNER", url='https://t.me/Its_Sahil_Ansari')
         ]
     ])
 
-    client.send_photo(
+    await client.send_photo(
         chat_id=message.chat.id,
         photo=START_PIC,
         caption=START_MSG,
@@ -74,7 +80,7 @@ def start_command(client, message):
     )
 
 @app.on_message(filters.command("startsequence"))
-def start_sequence(client, message):
+async def start_sequence(client, message):
     user_id = message.from_user.id
     if user_id not in user_sequences:
         user_sequences[user_id] = {
@@ -82,7 +88,8 @@ def start_sequence(client, message):
             'resolution_order': default_resolution_order.copy(),
             'sequence_mode': 'episode'  # Default to episode-first mode
         }
-        message.reply_text("✅ Sequence mode started! Send your files now. Use /setresolutionorder to choose resolution order or /setsequencemode to choose sequencing mode.")
+        logger.info(f"User {user_id} started sequence mode")
+    await message.reply_text("✅ Sequence mode started! Send your files now. Use /setresolutionorder, /setsequencemode, or /showsettings to customize.")
 
 @app.on_message(filters.command("setresolutionorder"))
 async def set_resolution_order(client, message):
@@ -102,11 +109,11 @@ async def set_resolution_order(client, message):
         ]
     ])
     await message.reply_text(
-        "📏 Choose the resolution to prioritize (files will be sent in this order):",
+        "📏 Choose the resolution to prioritize:",
         reply_markup=buttons
     )
+    logger.info(f"User {user_id} requested resolution order selection")
 
-# New command to set sequence mode
 @app.on_message(filters.command("setsequencemode"))
 async def set_sequence_mode(client, message):
     user_id = message.from_user.id
@@ -118,10 +125,33 @@ async def set_sequence_mode(client, message):
     ])
     await message.reply_text(
         "📋 Choose sequencing mode:\n"
-        "- Episode First: Sends all resolutions for each episode (e.g., Episode 1: 720p, 1080p; Episode 2: 720p, 1080p).\n"
-        "- Resolution First: Sends all episodes for each resolution (e.g., all 720p, then all 1080p).",
+        "- Episode First: Sends all resolutions for each episode.\n"
+        "- Resolution First: Sends all episodes for each resolution.",
         reply_markup=buttons
     )
+    logger.info(f"User {user_id} requested sequence mode selection")
+
+@app.on_message(filters.command("showsettings"))
+async def show_settings(client, message):
+    user_id = message.from_user.id
+    if user_id not in user_sequences:
+        user_sequences[user_id] = {
+            'files': [],
+            'resolution_order': default_resolution_order.copy(),
+            'sequence_mode': 'episode'
+        }
+    
+    resolution_order = user_sequences[user_id]['resolution_order']
+    sorted_resolutions = sorted(resolution_order.items(), key=lambda x: x[1])
+    resolution_text = ", ".join(res[0] for res in sorted_resolutions)
+    sequence_mode = user_sequences[user_id]['sequence_mode'].capitalize()
+    
+    await message.reply_text(
+        f"⚙️ **Current Settings**\n"
+        f"**Sequence Mode**: {sequence_mode} First\n"
+        f"**Resolution Order**: {resolution_text}"
+    )
+    logger.info(f"User {user_id} viewed settings: mode={sequence_mode}, resolution_order={resolution_text}")
 
 @app.on_message(filters.command("endsequence"))
 async def end_sequence(client, message):
@@ -130,10 +160,9 @@ async def end_sequence(client, message):
         await message.reply_text("❌ No files in sequence!")
         return
 
-    # Get user's sequence mode
     sequence_mode = user_sequences[user_id].get('sequence_mode', 'episode')
+    logger.info(f"User {user_id} ending sequence with mode: {sequence_mode}")
 
-    # Sort files based on sequence mode
     if sequence_mode == 'resolution':
         sorted_files = sorted(
             user_sequences[user_id]['files'],
@@ -142,7 +171,7 @@ async def end_sequence(client, message):
                 extract_episode_number(x["filename"])
             )
         )
-    else:  # Default to episode-first
+    else:  # episode-first
         sorted_files = sorted(
             user_sequences[user_id]['files'],
             key=lambda x: (
@@ -163,9 +192,10 @@ async def end_sequence(client, message):
 
     del user_sequences[user_id]
     await message.reply_text("✅ All files have been sequenced!")
+    logger.info(f"User {user_id} completed sequencing {len(sorted_files)} files")
 
 @app.on_message(filters.document | filters.video | filters.audio)
-def store_file(client, message):
+async def store_file(client, message):
     user_id = message.from_user.id
     if user_id in user_sequences:
         file_name = (
@@ -175,9 +205,10 @@ def store_file(client, message):
             "Unknown"
         )
         user_sequences[user_id]['files'].append({"filename": file_name, "msg_id": message.id, "chat_id": message.chat.id})
-        message.reply_text("📂 Your file has been added to the sequence!")
+        await message.reply_text("📂 Your file has been added to the sequence!")
+        logger.info(f"User {user_id} added file: {file_name}")
     else:
-        message.reply_text("❌ You need to start sequence mode first using /startsequence.")
+        await message.reply_text("❌ You need to start sequence mode first using /startsequence.")
 
 @app.on_message(filters.command("leaderboard"))
 async def leaderboard(client, message):
@@ -191,11 +222,12 @@ async def leaderboard(client, message):
         leaderboard_text = "No data available!"
 
     await message.reply_text(leaderboard_text)
+    logger.info(f"User {message.from_user.id} viewed leaderboard")
 
 @app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
-def broadcast(client, message):
+async def broadcast(client, message):
     if len(message.command) < 2:
-        message.reply_text("**Usage:** `/broadcast Your message here`")
+        await message.reply_text("**Usage:** `/broadcast Your message here`")
         return
 
     broadcast_text = message.text.split(" ", 1)[1]
@@ -204,88 +236,143 @@ def broadcast(client, message):
     count = 0
     for user in users:
         try:
-            client.send_message(user["user_id"], broadcast_text)
+            await client.send_message(user["user_id"], broadcast_text)
             count += 1
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to broadcast to user {user['user_id']}: {e}")
 
-    message.reply_text(f"✅ Broadcast sent to {count} users.")
+    await message.reply_text(f"✅ Broadcast sent to {count} users.")
+    logger.info(f"Broadcast sent to {count} users by {message.from_user.id}")
 
 @app.on_message(filters.command("users") & filters.user(OWNER_ID))
-def get_users(client, message):
+async def get_users(client, message):
     user_count = users_collection.count_documents({})
-    message.reply_text(f"📊 **Total Users:** {user_count}")
+    await message.reply_text(f"📊 **Total Users:** {user_count}")
+    logger.info(f"User {message.from_user.id} checked user count: {user_count}")
 
 @app.on_callback_query()
-async def cb_handler(client: app, query: CallbackQuery):
+async def cb_handler(client: Client, query: CallbackQuery):
     data = query.data
     user_id = query.from_user.id
+    logger.info(f"Received callback query: {data} from user {user_id}")
 
-    if data == "help":
-        await query.message.edit_text(
-            text=HELP_TXT.format(first=query.from_user.first_name),
-            disable_web_page_preview=True,
-            reply_markup=InlineKeyboardMarkup(
-                [
+    # Initialize user_sequences if not present
+    if user_id not in user_sequences:
+        user_sequences[user_id] = {
+            'files': [],
+            'resolution_order': default_resolution_order.copy(),
+            'sequence_mode': 'episode'
+        }
+        logger.info(f"Initialized user_sequences for user {user_id}")
+
+    try:
+        if data == "help":
+            await query.message.edit_text(
+                text=HELP_TXT.format(first=query.from_user.first_name),
+                disable_web_page_preview=True,
+                reply_markup=InlineKeyboardMarkup(
                     [
-                        InlineKeyboardButton('Back', callback_data='start'),
-                        InlineKeyboardButton("Close", callback_data='close')
+                        [
+                            InlineKeyboardButton('Back', callback_data='start'),
+                            InlineKeyboardButton("Close", callback_data='close')
+                        ]
                     ]
-                ]
+                )
             )
-        )
-    elif data == "start":
-        await query.message.edit_text(
-            text=START_MSG.format(first=query.from_user.first_name),
-            disable_web_page_preview=True,
-            reply_markup=InlineKeyboardMarkup([
+        elif data == "start":
+            await query.message.edit_text(
+                text=START_MSG.format(first=query.from_user.first_name),
+                disable_web_page_preview=True,
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("Help", callback_data='help'),
+                        InlineKeyboardButton("Close", callback_data='close')
+                    ],
+                    [
+                        InlineKeyboardButton("Set Resolution Order", callback_data='set_resolution'),
+                        InlineKeyboardButton("Set Sequence Mode", callback_data='set_mode')
+                    ],
+                    [
+                        InlineKeyboardButton("Show Settings", callback_data='show_settings'),
+                        InlineKeyboardButton("OWNER", url='https://t.me/Its_Sahil_Ansari')
+                    ]
+                ])
+            )
+        elif data == "close":
+            await query.message.delete()
+            try:
+                await query.message.reply_to_message.delete()
+            except:
+                pass
+        elif data == "set_resolution":
+            buttons = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("Help", callback_data='help'),
-                    InlineKeyboardButton("Close", callback_data='close')
+                    InlineKeyboardButton("360p First", callback_data='res_360p'),
+                    InlineKeyboardButton("480p First", callback_data='res_480p')
                 ],
                 [
-                    InlineKeyboardButton("Set Resolution Order", callback_data='set_resolution'),
-                    InlineKeyboardButton("Set Sequence Mode", callback_data='set_mode')
+                    InlineKeyboardButton("720p First", callback_data='res_720p'),
+                    InlineKeyboardButton("1080p First", callback_data='res_1080p')
                 ],
                 [
-                    InlineKeyboardButton("OWNER", url='https://t.me/Its_Sahil_Ansari')
+                    InlineKeyboardButton("4k First", callback_data='res_4k'),
+                    InlineKeyboardButton("Reset to Default", callback_data='res_default')
                 ]
             ])
-        )
-    elif data == "close":
-        await query.message.delete()
-        try:
-            await query.message.reply_to_message.delete()
-        except:
-            pass
-    elif data.startswith("res_"):
-        if user_id not in user_sequences:
-            user_sequences[user_id] = {
-                'files': [],
-                'resolution_order': default_resolution_order.copy(),
-                'sequence_mode': 'episode'
-            }
-        resolution = data.split('_')[1]
-        new_order = default_resolution_order.copy()
-        if resolution == 'default':
-            user_sequences[user_id]['resolution_order'] = default_resolution_order.copy()
-            await query.message.edit_text("✅ Resolution order reset to default (360p, 480p, 720p, 1080p, 4k).")
+            await query.message.edit_text(
+                "📏 Choose the resolution to prioritize:",
+                reply_markup=buttons
+            )
+            logger.info(f"User {user_id} opened resolution order selection")
+        elif data == "set_mode":
+            buttons = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("Episode First", callback_data='mode_episode'),
+                    InlineKeyboardButton("Resolution First", callback_data='mode_resolution')
+                ]
+            ])
+            await query.message.edit_text(
+                "📋 Choose sequencing mode:\n"
+                "- Episode First: Sends all resolutions for each episode.\n"
+                "- Resolution First: Sends all episodes for each resolution.",
+                reply_markup=buttons
+            )
+            logger.info(f"User {user_id} opened sequence mode selection")
+        elif data == "show_settings":
+            resolution_order = user_sequences[user_id]['resolution_order']
+            sorted_resolutions = sorted(resolution_order.items(), key=lambda x: x[1])
+            resolution_text = ", ".join(res[0] for res in sorted_resolutions)
+            sequence_mode = user_sequences[user_id]['sequence_mode'].capitalize()
+            await query.message.edit_text(
+                f"⚙️ **Current Settings**\n"
+                f"**Sequence Mode**: {sequence_mode} First\n"
+                f"**Resolution Order**: {resolution_text}"
+            )
+            logger.info(f"User {user_id} viewed settings via callback")
+        elif data.startswith("res_"):
+            resolution = data.split('_')[1]
+            new_order = default_resolution_order.copy()
+            if resolution == 'default':
+                user_sequences[user_id]['resolution_order'] = default_resolution_order.copy()
+                await query.message.edit_text("✅ Resolution order reset to default (360p, 480p, 720p, 1080p, 4k).")
+            else:
+                new_order[resolution] = 0
+                other_resolutions = [r for r in default_resolution_order.keys() if r != resolution]
+                for i, res in enumerate(other_resolutions, 1):
+                    new_order[res] = i
+                user_sequences[user_id]['resolution_order'] = new_order
+                await query.message.edit_text(f"✅ Resolution order set with {resolution} first.")
+            logger.info(f"User {user_id} set resolution order: {resolution}")
+        elif data.startswith("mode_"):
+            mode = data.split('_')[1]
+            user_sequences[user_id]['sequence_mode'] = mode
+            await query.message.edit_text(f"✅ Sequence mode set to {mode.capitalize()} First.")
+            logger.info(f"User {user_id} set sequence mode to {mode}")
         else:
-            new_order[resolution] = 0
-            other_resolutions = [r for r in default_resolution_order.keys() if r != resolution]
-            for i, res in enumerate(other_resolutions, 1):
-                new_order[res] = i
-            user_sequences[user_id]['resolution_order'] = new_order
-            await query.message.edit_text(f"✅ Resolution order set with {resolution} first.")
-    elif data.startswith("mode_"):
-        if user_id not in user_sequences:
-            user_sequences[user_id] = {
-                'files': [],
-                'resolution_order': default_resolution_order.copy(),
-                'sequence_mode': 'episode'
-            }
-        mode = data.split('_')[1]
-        user_sequences[user_id]['sequence_mode'] = mode
-        await query.message.edit_text(f"✅ Sequence mode set to {mode.capitalize()} First.")
+            await query.message.edit_text("❌ Unknown callback data.")
+            logger.warning(f"Unknown callback data: {data} from user {user_id}")
+    except Exception as e:
+        logger.error(f"Error in callback handler for user {user_id}: {e}")
+        await query.message.edit_text("❌ An error occurred. Please try again.")
 
 app.run()
